@@ -1,0 +1,278 @@
+---
+- name: Provision Debian Host with Basic Hardening (Using iptables Instead of UFW)
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # This SSH key line is for the user cosmond
+    cosmond_ssh_key: "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIDUHfFVjcZQLXQbLhhZ5w0QzsGE/haDrJc4YytGFDGC4AAAABHNzaDo= cosmond"
+
+    # Where to download the .zshrc from (your GitHub repo)
+    cosmond_zshrc_url: "https://raw.githubusercontent.com/chadosmond/chadosmond/main/.zshrc"
+
+    # Adjust these if you want to allow IPv6, etc.
+    sysctl_settings:
+      net.ipv4.ip_forward: 0
+      net.ipv4.conf.all.accept_redirects: 0
+      net.ipv4.conf.all.send_redirects: 0
+      net.ipv4.conf.all.accept_source_route: 0
+      net.ipv4.icmp_echo_ignore_broadcasts: 1
+      net.ipv4.icmp_ignore_bogus_error_responses: 1
+      net.ipv4.conf.default.rp_filter: 1
+      net.ipv4.conf.all.log_martians: 1
+      # If you do not need IPv6, you can disable it:
+      net.ipv6.conf.all.disable_ipv6: 1
+      net.ipv6.conf.default.disable_ipv6: 1
+
+  tasks:
+    ########################################################################
+    # 1. User Setup: cosmond
+    ########################################################################
+    - name: Ensure the user "cosmond" exists
+      user:
+        name: cosmond
+        state: present
+        shell: /usr/bin/zsh  # set default shell to zsh
+
+    - name: Ensure authorized_keys file for cosmond has the correct key
+      authorized_key:
+        user: cosmond
+        key: "{{ cosmond_ssh_key }}"
+
+    - name: Install tmux and zsh
+      package:
+        name:
+          - tmux
+          - zsh
+        state: present
+
+    - name: Download .zshrc for cosmond
+      get_url:
+        url: "{{ cosmond_zshrc_url }}"
+        dest: /home/cosmond/.zshrc
+        owner: cosmond
+        group: cosmond
+        mode: '0644'
+
+    ########################################################################
+    # 2. Harden SSHD to allow only key-based authentication
+    ########################################################################
+    - name: Ensure SSH public key authentication is enforced
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication\s+'
+        line: 'PasswordAuthentication no'
+        state: present
+      notify: Restart SSH
+
+    - name: Ensure root login over SSH is disabled (optional but recommended)
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin\s+'
+        line: 'PermitRootLogin no'
+        state: present
+      notify: Restart SSH
+
+    ########################################################################
+    # 3. Basic Hardening (iptables instead of UFW)
+    ########################################################################
+
+    # 3.1. Ensure required packages for persistent iptables rules
+    - name: Install iptables-persistent (to save rules)
+      package:
+        name: iptables-persistent
+        state: present
+
+    # 3.2. Flush existing rules (optional step if you want a clean slate)
+    - name: Flush existing iptables (IPv4)
+      iptables:
+        flush: true
+        ip_version: 4
+
+    - name: Flush existing iptables (IPv6)
+      iptables:
+        flush: true
+        ip_version: 6
+      when: sysctl_settings.net.ipv6.conf.all.disable_ipv6 is not defined or 
+            sysctl_settings.net.ipv6.conf.all.disable_ipv6|int == 0
+
+    # 3.3. Set default policies: drop inbound, allow outbound
+    - name: Set default policy for INPUT (IPv4)
+      community.general.iptables:
+        chain: INPUT
+        policy: DROP
+        ip_version: 4
+
+    - name: Set default policy for FORWARD (IPv4)
+      community.general.iptables:
+        chain: FORWARD
+        policy: DROP
+        ip_version: 4
+
+    - name: Set default policy for OUTPUT (IPv4)
+      community.general.iptables:
+        chain: OUTPUT
+        policy: ACCEPT
+        ip_version: 4
+
+    # 3.3.1. For IPv6, if not disabled
+    - name: Set default policy for INPUT (IPv6)
+      community.general.iptables:
+        chain: INPUT
+        policy: DROP
+        ip_version: 6
+      when: sysctl_settings.net.ipv6.conf.all.disable_ipv6|int == 0
+
+    - name: Set default policy for FORWARD (IPv6)
+      community.general.iptables:
+        chain: FORWARD
+        policy: DROP
+        ip_version: 6
+      when: sysctl_settings.net.ipv6.conf.all.disable_ipv6|int == 0
+
+    - name: Set default policy for OUTPUT (IPv6)
+      community.general.iptables:
+        chain: OUTPUT
+        policy: ACCEPT
+        ip_version: 6
+      when: sysctl_settings.net.ipv6.conf.all.disable_ipv6|int == 0
+
+    # 3.4. Allow localhost traffic
+    - name: Accept traffic on localhost (IPv4)
+      community.general.iptables:
+        chain: INPUT
+        in_interface: lo
+        jump: ACCEPT
+        comment: "Allow loopback traffic"
+        ip_version: 4
+
+    - name: Accept traffic on localhost (IPv6)
+      community.general.iptables:
+        chain: INPUT
+        in_interface: lo
+        jump: ACCEPT
+        comment: "Allow loopback traffic"
+        ip_version: 6
+      when: sysctl_settings.net.ipv6.conf.all.disable_ipv6|int == 0
+
+    # 3.5. Allow established/related connections (so return traffic isn't blocked)
+    - name: Accept established/related connections (IPv4)
+      community.general.iptables:
+        chain: INPUT
+        ctstate: [ "ESTABLISHED", "RELATED" ]
+        jump: ACCEPT
+        comment: "Allow established or related inbound traffic"
+        ip_version: 4
+
+    - name: Accept established/related connections (IPv6)
+      community.general.iptables:
+        chain: INPUT
+        ctstate: [ "ESTABLISHED", "RELATED" ]
+        jump: ACCEPT
+        comment: "Allow established or related inbound traffic"
+        ip_version: 6
+      when: sysctl_settings.net.ipv6.conf.all.disable_ipv6|int == 0
+
+    # 3.6. Allow SSH inbound (port 22)
+    - name: Allow inbound SSH (IPv4)
+      community.general.iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: 22
+        jump: ACCEPT
+        comment: "Allow SSH"
+        ip_version: 4
+
+    - name: Allow inbound SSH (IPv6)
+      community.general.iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: 22
+        jump: ACCEPT
+        comment: "Allow SSH"
+        ip_version: 6
+      when: sysctl_settings.net.ipv6.conf.all.disable_ipv6|int == 0
+
+    # 3.7. Save rules so they persist across reboot
+    - name: Save IPv4 rules
+      command: iptables-save > /etc/iptables/rules.v4
+
+    - name: Save IPv6 rules
+      command: ip6tables-save > /etc/iptables/rules.v6
+      when: sysctl_settings.net.ipv6.conf.all.disable_ipv6|int == 0
+
+    # 3.8. Automatic Updates, AIDE, etc. (Optional CIS steps from prior example)
+    - name: Install unattended-upgrades
+      package:
+        name: unattended-upgrades
+        state: present
+
+    - name: Configure unattended-upgrades (enable security updates)
+      lineinfile:
+        path: /etc/apt/apt.conf.d/50unattended-upgrades
+        regexp: '^//\s*"\${distro_id}:\${distro_codename}-security";'
+        line: '        "${distro_id}:${distro_codename}-security";'
+        state: present
+
+    - name: Ensure unattended-upgrades is enabled
+      lineinfile:
+        path: /etc/apt/apt.conf.d/20auto-upgrades
+        regexp: '^APT::Periodic::Unattended-Upgrade\s+'
+        line: 'APT::Periodic::Unattended-Upgrade "1";'
+        create: yes
+      notify: Update apt cache
+
+    - name: Set APT to update package lists daily
+      lineinfile:
+        path: /etc/apt/apt.conf.d/20auto-upgrades
+        regexp: '^APT::Periodic::Update-Package-Lists\s+'
+        line: 'APT::Periodic::Update-Package-Lists "1";'
+        create: yes
+
+    - name: Remove insecure packages
+      package:
+        name:
+          - telnet
+          - rsh-client
+          - rsh-redone-client
+          - rsh-server
+          - tftp
+        state: absent
+
+    - name: Install AIDE
+      package:
+        name: aide
+        state: present
+
+    - name: Initialize AIDE database (may take a while on larger systems)
+      command: /usr/bin/aideinit
+      args:
+        creates: /var/lib/aide/aide.db.new
+      register: aide_init
+      changed_when: aide_init.rc == 0
+
+    - name: Replace the old AIDE database with the new one (if created)
+      copy:
+        src: /var/lib/aide/aide.db.new
+        dest: /var/lib/aide/aide.db
+        remote_src: yes
+      when: aide_init is defined and aide_init.rc == 0
+
+    - name: Apply sysctl hardening settings
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      with_dict: "{{ sysctl_settings }}"
+
+  handlers:
+    - name: Restart SSH
+      service:
+        name: ssh
+        state: restarted
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
