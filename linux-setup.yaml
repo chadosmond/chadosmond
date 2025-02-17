@@ -1,6 +1,6 @@
 ---
-- name: Provision Debian Host with Basic Hardening (Using iptables Instead of UFW)
-  hosts: all
+- name: Provision basic host
+  hosts: localhost
   become: true
   gather_facts: true
 
@@ -45,6 +45,10 @@
         name:
           - tmux
           - zsh
+          - sudo
+          - vim
+          - fzf
+
         state: present
 
     - name: Download .zshrc for cosmond
@@ -54,6 +58,16 @@
         owner: cosmond
         group: cosmond
         mode: '0644'
+    - name: setup git name
+      git_config:
+        name: user.name
+        scope: global
+        value: "Chad Osmond"
+    - name: setup git user email
+      git_config:
+        name: user.email
+        scope: global
+        value: chad.osmond@smarterit.ca
 
     ########################################################################
     # 2. Harden SSHD to allow only key-based authentication
@@ -113,33 +127,6 @@
           - rsh-server
           - tftp
         state: absent
-
-    - name: Install AIDE
-      package:
-        name: aide
-        state: present
-
-    - name: Initialize AIDE database (may take a while on larger systems)
-      command: /usr/bin/aideinit
-      args:
-        creates: /var/lib/aide/aide.db.new
-      register: aide_init
-      changed_when: aide_init.rc == 0
-
-    - name: Replace the old AIDE database with the new one (if created)
-      copy:
-        src: /var/lib/aide/aide.db.new
-        dest: /var/lib/aide/aide.db
-        remote_src: yes
-      when: aide_init is defined and aide_init.rc == 0
-
-    - name: Apply sysctl hardening settings
-      sysctl:
-        name: "{{ item.key }}"
-        value: "{{ item.value }}"
-        state: present
-        reload: yes
-      with_dict: "{{ sysctl_settings }}"
 
   handlers:
     - name: Restart SSH

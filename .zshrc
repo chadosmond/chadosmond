@@ -110,4 +110,3 @@ function fcd {
     -name ".vscode-insiders" \
     \) -prune -false -o -type d -print | fzf)
     }
-zprof
