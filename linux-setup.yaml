@@ -5,13 +5,17 @@
   gather_facts: true
 
   vars:
-    # This SSH key line is for the user cosmond
-    cosmond_ssh_key: "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIDUHfFVjcZQLXQbLhhZ5w0QzsGE/haDrJc4YytGFDGC4AAAABHNzaDo= cosmond"
+    shell_users:
+      - login: "cosmond"
+        pass_hash: "$y$j9T$kqf/L.W.kHV018nlrXWzX0$QwoYiKERmT0RjSiw/BtihmFTOvls9CePZ.h7ywUt255"
+        pubkeys:
+          - "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIDUHfFVjcZQLXQbLhhZ5w0QzsGE/haDrJc4YytGFDGC4AAAABHNzaDo="
+          - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUkpUmHRuVtr866xYO+z3Unnz19EgRhyWxFrY2jnuwB"
+        rcurl: "https://raw.githubusercontent.com/chadosmond/chadosmond/main/.zshrc"
+        shell: "zsh"
+        name: "Chad Osmond"
+        email: "chad.osmond@smarterit.ca"
 
-    # Where to download the .zshrc from (your GitHub repo)
-    cosmond_zshrc_url: "https://raw.githubusercontent.com/chadosmond/chadosmond/main/.zshrc"
-
-    # Adjust these if you want to allow IPv6, etc.
     sysctl_settings:
       net.ipv4.ip_forward: 0
       net.ipv4.conf.all.accept_redirects: 0
@@ -21,25 +25,51 @@
       net.ipv4.icmp_ignore_bogus_error_responses: 1
       net.ipv4.conf.default.rp_filter: 1
       net.ipv4.conf.all.log_martians: 1
-      # If you do not need IPv6, you can disable it:
       net.ipv6.conf.all.disable_ipv6: 1
       net.ipv6.conf.default.disable_ipv6: 1
 
   tasks:
     ########################################################################
-    # 1. User Setup: cosmond
+    # 1. User Setup
     ########################################################################
-    - name: Ensure the user "cosmond" exists
+    - name: Ensure the user exists
       user:
-        name: cosmond
+        name: "{{ item.login }}"
         state: present
-        shell: /usr/bin/zsh  # set default shell to zsh
+        password: "{{ item.pass_hash }}"
+        shell: "/usr/bin/{{ item.shell }}"
+      with_items: "{{ shell_users }}"
 
-    - name: Ensure authorized_keys file for cosmond has the correct key
+    - name: Ensure authorized_keys file for user has the correct key
       authorized_key:
-        user: cosmond
-        key: "{{ cosmond_ssh_key }}"
+        user: "{{ item.login }}"
+        key: "{% for key in item.pubkeys %}{{ key ~ '\n' }}{% endfor %}"
+      with_items: "{{ shell_users }}"
 
+    - name: Download rc file for User
+      get_url:
+        url: "{{ item.rcurl }}"
+        dest: "/home/{{ item.login }}/.{{ item.shell }}rc"
+        owner: "{{ item.login }}"
+        group: "{{ item.login }}"
+        mode: '0644'
+      with_items: "{{ shell_users }}"
+
+    - name: Setup git name
+      git_config:
+        name: user.name
+        scope: global
+        value: "{{ item.name }}"
+      with_items: "{{ shell_users }}"
+
+    - name: Setup git user email
+      git_config:
+        name: user.email
+        scope: global
+        value: "{{ item.email }}"
+      with_items: "{{ shell_users }}"
+
+    
     - name: Install tmux and zsh
       package:
         name:
@@ -48,26 +78,7 @@
           - sudo
           - vim
           - fzf
-
         state: present
-
-    - name: Download .zshrc for cosmond
-      get_url:
-        url: "{{ cosmond_zshrc_url }}"
-        dest: /home/cosmond/.zshrc
-        owner: cosmond
-        group: cosmond
-        mode: '0644'
-    - name: setup git name
-      git_config:
-        name: user.name
-        scope: global
-        value: "Chad Osmond"
-    - name: setup git user email
-      git_config:
-        name: user.email
-        scope: global
-        value: chad.osmond@smarterit.ca
 
     ########################################################################
     # 2. Harden SSHD to allow only key-based authentication
