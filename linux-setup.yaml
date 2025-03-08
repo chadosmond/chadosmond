@@ -11,6 +11,7 @@
         pubkeys:
           - "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIDUHfFVjcZQLXQbLhhZ5w0QzsGE/haDrJc4YytGFDGC4AAAABHNzaDo="
           - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUkpUmHRuVtr866xYO+z3Unnz19EgRhyWxFrY2jnuwB"
+          - "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIH+Wwha4aKgm1V/YvsRlWBSuiTnIRhdP58/uKFwixhMMAAAAC3NzaDpjb3Ntb25k"  
         rcurl: "https://raw.githubusercontent.com/chadosmond/chadosmond/main/.zshrc"
         shell: "zsh"
         name: "Chad Osmond"
